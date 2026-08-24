@@ -150,3 +150,7 @@ checklink/cookies.txt
 
 # Quarto
 .quarto
+
+# habitrack runtime state (DESIGN.md §3)
+data/
+.sesskey

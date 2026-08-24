@@ -170,7 +170,7 @@ def render_table():
 
 @rt("/")
 def get():
-    return Titled("習慣ログ", Div(H1("習慣ログ"), render_table()))
+    return Titled("習慣ログ", render_table())  # Titled renders the H1 itself
 
 
 @rt("/toggle/{item}/{d}")
@@ -188,13 +188,10 @@ def post(item: str, d: str):
 
 @rt("/login", methods=["GET"])
 def login_page():
-    return Titled("習慣ログ", Div(
-        H1("習慣ログ"),
-        Form(
-            Input(type="password", name="password", autofocus=True),
-            Button("ログイン"),
-            method="post", action="/login",
-        ),
+    return Titled("習慣ログ", Form(
+        Input(type="password", name="password", autofocus=True),
+        Button("ログイン"),
+        method="post", action="/login",
     ))
 
 

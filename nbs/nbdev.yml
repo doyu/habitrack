@@ -1,0 +1,14 @@
+project:
+  output-dir: _docs
+
+website:
+  title: "habitrack"
+  site-url: "https://doyu.github.io/habitrack"
+  description: ""
+  repo-branch: main
+  repo-url: "https://github.com/doyu/habitrack"
+
+format-links:
+  - html
+  - format: commonmark
+    text: Markdown

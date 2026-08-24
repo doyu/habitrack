@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
 ]
-dependencies = ["pandas"]
+dependencies = ["pandas", "python-fasthtml"]
 
 [project.urls]
 Repository = "https://github.com/doyu/habitrack"

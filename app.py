@@ -12,12 +12,13 @@ Run:
 
 import os
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import pandas as pd
 from fasthtml.common import *
+
+from habitrack.core import current_streak, load_full, save_full, window
 
 HERE = Path(__file__).parent
 DATA_DIR = HERE / "data"
@@ -36,44 +37,6 @@ SECRET_KEY = os.environ["HABITRACK_SECRET_KEY"]
 # ---------------------------------------------------------------- backend --
 def today() -> date:
     return datetime.now(TZ).date()
-
-
-def load_full() -> pd.DataFrame:
-    """Full history from ledger.csv; blank cells (hand-added columns) read as False."""
-    if not DATA_PATH.exists():
-        df = pd.DataFrame(False, index=pd.Index([today()], name="date"),
-                          columns=DEFAULT_ITEMS)
-        save_full(df)
-        return df
-    df = pd.read_csv(DATA_PATH, index_col=0)
-    df = df.fillna(False).astype(bool)
-    df.index = pd.Index([date.fromisoformat(d) for d in df.index], name="date")
-    return df
-
-
-def save_full(df: pd.DataFrame) -> None:
-    """Atomic write: a mid-write crash must never corrupt the live file."""
-    DATA_DIR.mkdir(exist_ok=True)
-    tmp = DATA_PATH.with_suffix(".tmp")
-    df.to_csv(tmp)
-    os.replace(tmp, DATA_PATH)
-
-
-def window(full: pd.DataFrame) -> pd.DataFrame:
-    days = [today() - timedelta(days=i) for i in range(DAYS_SHOWN - 1, -1, -1)]
-    return full.reindex(days, fill_value=False)
-
-
-def current_streak(full: pd.DataFrame, item: str) -> int:
-    col = full[item]
-    d = today()
-    if not col.get(d, False):  # today unchecked → streak starts from yesterday
-        d -= timedelta(days=1)
-    streak = 0
-    while col.get(d, False):
-        streak += 1
-        d -= timedelta(days=1)
-    return streak
 
 
 # ---------------------------------------------------------------- auth -----
@@ -125,8 +88,8 @@ app, rt = fast_app(
 
 
 def render_table():
-    full = load_full()
-    df = window(full)
+    full = load_full(DATA_PATH, DEFAULT_ITEMS, today())
+    df = window(full, today(), DAYS_SHOWN)
     days = list(df.index)
     t = today()
 
@@ -141,7 +104,7 @@ def render_table():
 
     rows = [header]
     for item in df.columns:
-        streak = current_streak(full, item)
+        streak = current_streak(full, item, today())
         cells = [
             Td(
                 Span(item),
@@ -176,13 +139,13 @@ def get():
 @rt("/toggle/{item}/{d}")
 def post(item: str, d: str):
     day = date.fromisoformat(d)
-    full = load_full()
+    full = load_full(DATA_PATH, DEFAULT_ITEMS, today())
     if item in full.columns:
         if day not in full.index:
             full.loc[day] = False
         full.at[day, item] = not full.at[day, item]
         full.sort_index(inplace=True)
-        save_full(full)
+        save_full(full, DATA_PATH)
     return render_table()
 
 

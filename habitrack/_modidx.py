@@ -5,4 +5,7 @@ d = { 'settings': { 'branch': 'main',
                 'doc_host': 'https://doyu.github.io',
                 'git_url': 'https://github.com/doyu/habitrack',
                 'lib_path': 'habitrack'},
-  'syms': {'habitrack.core': {'habitrack.core.foo': ('core.html#foo', 'habitrack/core.py')}}}
+  'syms': { 'habitrack.core': { 'habitrack.core.current_streak': ('core.html#current_streak', 'habitrack/core.py'),
+                                'habitrack.core.load_full': ('core.html#load_full', 'habitrack/core.py'),
+                                'habitrack.core.save_full': ('core.html#save_full', 'habitrack/core.py'),
+                                'habitrack.core.window': ('core.html#window', 'habitrack/core.py')}}}

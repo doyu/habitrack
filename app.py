@@ -9,7 +9,5 @@ from pathlib import Path
 
 from habitrack.app import main
 
-from habitrack.core import current_streak, load_full, save_full, window
-
 HERE = Path(__file__).parent
 main(HERE / "data" / "ledger.csv", static_path=str(HERE / "static"))

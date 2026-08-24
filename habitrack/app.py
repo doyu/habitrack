@@ -182,7 +182,7 @@ def main(
     data_path:Path,  # ledger.csv location
     static_path:str="static",  # passed through to `create_app`
     host:str="127.0.0.1",  # loopback only; Caddy is the sole public path (DESIGN.md §6)
-    port:int=5001,
+    port:int=None,  # default: $PORT if set (systemd unit), else 5001
 ):
     "Entry point: secrets from env (fail-fast on empty), serve on loopback."
     app = create_app(
@@ -192,4 +192,4 @@ def main(
         https_only=os.environ.get("HABITRACK_HTTPS_ONLY") == "1",
         static_path=static_path,
     )
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=host, port=port or int(os.environ.get("PORT", "5001")))

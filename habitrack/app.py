@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 import uvicorn
 from fasthtml.common import *
 
-from .core import display_name, is_archived, load_full, ordered_items, rate_30d, save_full, window
+from .core import display_name, is_archived, load_full, ordered_items, rate_30d, rename_item, save_full, set_archived, window
 
 # %% ../nbs/01_app.ipynb #62d08d4e
 DAYS_SHOWN = 10
@@ -47,6 +47,9 @@ input[type=checkbox].today-cb{border-color:var(--amber);border-width:2.5px}
 .count{font-size:10px;font-weight:700;color:var(--amber);background:var(--amber-soft);
        border-radius:3px;padding:1px 5px;margin-left:6px}
 .count.zero{background:none;color:var(--ink-soft)}
+.item-cell span,.item-cell s{cursor:text}
+.item-cell input[type=text]{font:inherit;width:9em;padding:2px 4px;border:1.5px solid var(--amber);border-radius:3px;background:none}
+.err{display:block;font-size:10px;color:#a33}
 input[type=password]{font-family:inherit;font-size:15px;padding:6px 8px;
   border:1.5px solid var(--ink-soft);border-radius:3px;background:none}
 button{font-family:inherit;font-size:14px;padding:6px 14px;cursor:pointer;
@@ -117,11 +120,12 @@ def create_app(
         rows = [header]
         for item in ordered_items(df):  # active first, archived at the bottom (DESIGN.md §5)
             archived = is_archived(item)
+            edit = dict(hx_get=f"/edit/{quote(item, safe='')}", hx_target="closest td", hx_swap="innerHTML")
             if archived:
-                label = [S(display_name(item))]  # struck through, no badge
+                label = [S(display_name(item), **edit)]  # struck through, no badge
             else:
                 n = round(rate_30d(full, item, today()) * 30)  # checked days in the trailing 30 (DESIGN.md §4)
-                label = [Span(item), Span(f"{n}/30", cls=f"count{' zero' if n == 0 else ''}")]
+                label = [Span(item, **edit), Span(f"{n}/30", cls=f"count{' zero' if n == 0 else ''}")]
             cells = [Td(*label, cls="item-cell")]
             for d in days:
                 htmx = {} if archived else dict(
@@ -160,6 +164,33 @@ def create_app(
                 full.at[day, item] = not full.at[day, item]
                 full.sort_index(inplace=True)
                 save_full(full, data_path)
+        return render_table()
+
+    def edit_form(item, value, error=None):
+        "Click-to-edit: Enter submits; a leading ~ in the typed name archives, removing it restores (DESIGN.md §5)."
+        return Form(
+            Input(type="text", name="new", value=value, autofocus=True),
+            *([Small(error, cls="err")] if error else []),
+            hx_post=f"/rename/{quote(item, safe='')}", hx_target="#ledger", hx_swap="outerHTML",
+        )
+
+    @rt("/edit/{item}")
+    def get(item: str):
+        return edit_form(item, value=item)  # raw column name, so an archived row shows its ~
+
+    @rt("/rename/{item}")
+    def post(item: str, new: str = ""):
+        new = new.strip()
+        want = new.startswith("~")
+        base = new[1:] if want else new
+        with lock:
+            full = load_full(data_path, default_items, today())
+            try:
+                full = rename_item(full, display_name(item), base)  # validates; keeps the archived state
+                full = set_archived(full, base, want)  # then apply what was typed
+            except (ValueError, KeyError) as e:
+                return edit_form(item, value=new, error=str(e.args[0]))
+            save_full(full, data_path)
         return render_table()
 
     @rt("/login", methods=["GET"])

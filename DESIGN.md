@@ -1,7 +1,7 @@
 # habitrack — Design Spec
 
 Date: 2026-08-24 (Day 1 of live operation)
-Status: v6 — implemented and deployed (https://habitrack.ninjalabo.ai).
+Status: v7 — implemented and deployed (https://habitrack.ninjalabo.ai).
 This spec describes the current architecture; task state and remaining
 work live in GH Issues, not here.
 
@@ -21,7 +21,8 @@ explicitly deferred until real daily friction demands it.
 - Multi-user support, accounts, sign-up
 - PWA / native app (a home-screen shortcut to the URL is enough)
 - Any JS framework; no client-side state at all
-- Item-management UI in the app (items are managed by a CLI + Claude skill — see §5)
+- Item-management pages or forms in the app beyond click-to-edit on the
+  name (add stays in the CLI + Claude skill — see §5)
 - Git-committed data, automated backups, "GitHub grass" side effects
   (dropped — see §3)
 
@@ -116,7 +117,8 @@ Fonts CDN — fallback fonts apply offline; no other external assets):
 2. **The table** — one row per item, one column per day, **last 10 days
    only**, today highlighted. Cells are real `<input type="checkbox">`.
    Each row shows an `n/30` badge next to the item name: checked days in
-   the trailing 30 days ending today. (v6 replaced the streak: a streak
+   the trailing 30 days ending today. Clicking the name turns it into an
+   inline rename field (§5). (v6 replaced the streak: a streak
    drops to 0 after one missed day, which punishes frequency-type habits
    where rest days are normal; a rolling count has no cliff.)
 
@@ -132,12 +134,21 @@ two toggles that cancel each other out.
 
 ## 5. Item management — add / archive / rename
 
-**No UI in the app.** Managing items is a setup-time operation, not a
-daily one, and the daily screen stays checkboxes only. It is done through
-a CLI on the box, driven interactively by the `habitrack-items` Claude
-skill over ssh. (The "hand-edit the header" policy of v4 was revisited on
-2026-09-04 when it became real friction: ssh + sudo for every change,
-and no safety net.)
+**Two entry points, one data model.** The daily screen stays checkboxes
+only; there are no management pages or buttons.
+
+- **Inline, in the app (v7)**: click a routine name → it becomes a text
+  input holding the raw column name → edit → Enter. The `~` prefix is the
+  archive switch: type it to archive, delete it to restore (ASCII `~`
+  only). One GET (`/edit/{item}`) returns the form, one POST
+  (`/rename/{item}`) applies `rename_item` + `set_archived` under the
+  toggle lock and re-renders the table; a validation error re-renders the
+  form with the message. No cancel key (reload), no confirm dialog
+  (archiving is reversible — restore is the undo).
+- **CLI + skill, for batch work and add**: `python -m habitrack.admin` on
+  the box, driven by the `habitrack-items` Claude skill over ssh. Adding
+  an item is CLI-only for now. (The "hand-edit the header" policy of v4
+  was revisited on 2026-09-04 when it became real friction.)
 
 - **The CSV header row is still the item list.** No side file for item
   metadata — that would resurrect the `items.txt` double-bookkeeping
@@ -145,8 +156,9 @@ and no safety net.)
 - **Archived = column name prefixed with `~`** (`ARCHIVE_PREFIX`). History
   is kept in place; nothing is ever deleted. Archived items render at the
   bottom of the table, struck through, checkbox disabled, no badge;
-  `/toggle` ignores them. Restoring removes the marker. Users always
-  address items by their display name (marker stripped).
+  `/toggle` ignores them. Restoring removes the marker. The CLI addresses
+  items by display name (marker stripped); the inline editor shows the raw
+  column name so the `~` is visible and editable.
 - **Display order** = column order, active items first, then archived
   items. A new item is appended as the last column. No manual reorder
   (deferred; #10).
@@ -328,3 +340,8 @@ v5 → v6 (2026-09-04, #14):
 
 - §4 badge: trailing-30-day count `n/30` replaces the current streak;
   `current_streak` removed from core (`rate_30d` was already there).
+
+v5 → v6 → v7 (2026-09-04, #16):
+
+- §5: click-to-edit rename in the app; `~` typed in the name archives,
+  removed restores. CLI + skill remain for add and batch edits.

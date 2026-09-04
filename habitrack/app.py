@@ -11,7 +11,7 @@ __all__ = ['DAYS_SHOWN', 'TZ', 'DOW_JA', 'DEFAULT_ITEMS', 'CSS', 'HDRS', 'toggle
 import os
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 import uvicorn
 from fasthtml.common import *
 
-from .core import current_streak, display_name, is_archived, load_full, ordered_items, save_full, window
+from .core import display_name, is_archived, load_full, ordered_items, rate_30d, save_full, window
 
 # %% ../nbs/01_app.ipynb #62d08d4e
 DAYS_SHOWN = 10
@@ -44,9 +44,9 @@ input[type=checkbox]{appearance:none;width:20px;height:20px;border:1.5px solid v
   border-radius:3px;cursor:pointer;margin:2px 4px}
 input[type=checkbox]:checked{background:var(--ink);border-color:var(--ink)}
 input[type=checkbox].today-cb{border-color:var(--amber);border-width:2.5px}
-.streak{font-size:10px;font-weight:700;color:var(--amber);background:var(--amber-soft);
-        border-radius:3px;padding:1px 5px;margin-left:6px}
-.streak.zero{background:none;color:var(--ink-soft)}
+.count{font-size:10px;font-weight:700;color:var(--amber);background:var(--amber-soft);
+       border-radius:3px;padding:1px 5px;margin-left:6px}
+.count.zero{background:none;color:var(--ink-soft)}
 input[type=password]{font-family:inherit;font-size:15px;padding:6px 8px;
   border:1.5px solid var(--ink-soft);border-radius:3px;background:none}
 button{font-family:inherit;font-size:14px;padding:6px 14px;cursor:pointer;
@@ -118,10 +118,10 @@ def create_app(
         for item in ordered_items(df):  # active first, archived at the bottom (DESIGN.md §5)
             archived = is_archived(item)
             if archived:
-                label = [S(display_name(item))]  # struck through, no streak badge
+                label = [S(display_name(item))]  # struck through, no badge
             else:
-                streak = current_streak(full, item, today())
-                label = [Span(item), Span(str(streak), cls=f"streak{' zero' if streak == 0 else ''}")]
+                n = round(rate_30d(full, item, today()) * 30)  # checked days in the trailing 30 (DESIGN.md §4)
+                label = [Span(item), Span(f"{n}/30", cls=f"count{' zero' if n == 0 else ''}")]
             cells = [Td(*label, cls="item-cell")]
             for d in days:
                 htmx = {} if archived else dict(

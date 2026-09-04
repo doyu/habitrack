@@ -156,7 +156,7 @@ and no safety net.)
   `rate_30d`) in display order; `add NAME`, `archive NAME`,
   `unarchive NAME`, `rename OLD NEW` mutate. JSON on stdout, errors on
   stderr with exit 1. Every mutation: validate → copy the live file to
-  `ledger.csv.bak` (overwritten each time) → atomic `save_full` → re-read
+  `ledger.bak` (overwritten each time) → atomic `save_full` → re-read
   and compare; a mismatch exits non-zero and points at the `.bak`.
   `--data` is mandatory: no implicit current-directory state.
 - **Name constraints** (enforced by `validate_name`): no `,` `"` or

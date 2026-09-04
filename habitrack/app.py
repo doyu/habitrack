@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 import uvicorn
 from fasthtml.common import *
 
-from .core import current_streak, load_full, save_full, window
+from .core import current_streak, display_name, is_archived, load_full, ordered_items, save_full, window
 
 # %% ../nbs/01_app.ipynb #62d08d4e
 DAYS_SHOWN = 10
@@ -115,26 +115,29 @@ def create_app(
         )
 
         rows = [header]
-        for item in df.columns:
-            streak = current_streak(full, item, today())
-            cells = [
-                Td(
-                    Span(item),
-                    Span(str(streak), cls=f"streak{' zero' if streak == 0 else ''}"),
-                    cls="item-cell",
-                )
-            ]
+        for item in ordered_items(df):  # active first, archived at the bottom (DESIGN.md §5)
+            archived = is_archived(item)
+            if archived:
+                label = [S(display_name(item))]  # struck through, no streak badge
+            else:
+                streak = current_streak(full, item, today())
+                label = [Span(item), Span(str(streak), cls=f"streak{' zero' if streak == 0 else ''}")]
+            cells = [Td(*label, cls="item-cell")]
             for d in days:
+                htmx = {} if archived else dict(
+                    hx_post=toggle_url(item, d),
+                    hx_target="#ledger",
+                    hx_swap="outerHTML",
+                    hx_disabled_elt="this",
+                )
                 cells.append(
                     Td(
                         Input(
                             type="checkbox",
                             checked=bool(df.at[d, item]),
+                            disabled=archived,
                             cls="today-cb" if d == t else "",
-                            hx_post=toggle_url(item, d),
-                            hx_target="#ledger",
-                            hx_swap="outerHTML",
-                            hx_disabled_elt="this",
+                            **htmx,
                         )
                     )
                 )
@@ -151,7 +154,7 @@ def create_app(
         day = date.fromisoformat(d)
         with lock:  # concurrent toggles must not lose writes
             full = load_full(data_path, default_items, today())
-            if item in full.columns:
+            if item in full.columns and not is_archived(item):  # archived rows are read-only
                 if day not in full.index:
                     full.loc[day] = False
                 full.at[day, item] = not full.at[day, item]

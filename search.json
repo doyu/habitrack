@@ -1,0 +1,262 @@
+[
+  {
+    "objectID": "app.html",
+    "href": "app.html",
+    "title": "app",
+    "section": "",
+    "text": "source\n\n\ndef toggle_url(\n    item:str, # item name — percent-encoded so names may contain ? # % & etc.\n    day:date\n)-&gt;str:\nhtmx POST target for one checkbox.\n\n\n\nassert toggle_url(\"読書\", date(2026, 8, 24)) == \"/toggle/%E8%AA%AD%E6%9B%B8/2026-08-24\"\nassert toggle_url(\"A?B\", date(2026, 8, 24)) == \"/toggle/A%3FB/2026-08-24\"  # ? must not become a query\nassert toggle_url(\"50%off#tag\", date(2026, 8, 24)) == \"/toggle/50%25off%23tag/2026-08-24\"",
+    "crumbs": [
+      "app"
+    ]
+  },
+  {
+    "objectID": "app.html#toggle_url",
+    "href": "app.html#toggle_url",
+    "title": "app",
+    "section": "",
+    "text": "source\n\n\ndef toggle_url(\n    item:str, # item name — percent-encoded so names may contain ? # % & etc.\n    day:date\n)-&gt;str:\nhtmx POST target for one checkbox.\n\n\n\nassert toggle_url(\"読書\", date(2026, 8, 24)) == \"/toggle/%E8%AA%AD%E6%9B%B8/2026-08-24\"\nassert toggle_url(\"A?B\", date(2026, 8, 24)) == \"/toggle/A%3FB/2026-08-24\"  # ? must not become a query\nassert toggle_url(\"50%off#tag\", date(2026, 8, 24)) == \"/toggle/50%25off%23tag/2026-08-24\"",
+    "crumbs": [
+      "app"
+    ]
+  },
+  {
+    "objectID": "app.html#create_app",
+    "href": "app.html#create_app",
+    "title": "app",
+    "section": "create_app",
+    "text": "create_app\n\n\nsource\n\ncreate_app\ndef create_app(\n    data_path:Path, # ledger.csv location — outside the static route (DESIGN.md §3)\n    password:str, # login password; must be non-empty\n    secret_key:str, # session cookie signing key; must be non-empty\n    https_only:bool=False, # sess_https_only — production sets this (DESIGN.md §6)\n    default_items:list=['読書', '運動', '執筆', '瞑想', '早起き'], # columns for first-run auto-create\n    tz:ZoneInfo=zoneinfo.ZoneInfo(key='Europe/Helsinki'), # timezone that defines \"today\"\n    static_path:str='static', # dedicated assets dir; must not contain the ledger\n):\nBuild the habitrack FastHTML app; fails fast on empty secrets.\n\n\n\n# empty secrets must be rejected at startup, not silently accepted\nwith tempfile.TemporaryDirectory() as d:\n    p = Path(d) / \"ledger.csv\"\n    for pw, key in [(\"\", \"k\"), (\"pw\", \"\"), (\"\", \"\")]:\n        try:\n            create_app(p, pw, key)\n            assert False, \"empty secret must be rejected\"\n        except ValueError:\n            pass\n\n\n# auth flow + toggle roundtrip against a temp ledger\nwith tempfile.TemporaryDirectory() as d:\n    p = Path(d) / \"ledger.csv\"\n    cli = Client(create_app(p, \"pw\", \"k\"))\n\n    r = cli.get(\"/\")  # unauthenticated -&gt; login\n    assert r.status_code == 303 and r.headers[\"location\"] == \"/login\"\n    assert cli.get(\"/login\").status_code == 200\n\n    r = cli.post(\"/login\", data={\"password\": \"wrong\"})\n    assert r.headers[\"location\"] == \"/login\"\n    r = cli.post(\"/login\", data={\"password\": \"pw\"})\n    assert r.headers[\"location\"] == \"/\"\n\n    r = cli.get(\"/\")\n    assert r.status_code == 200 and 'id=\"ledger\"' in r.text\n\n    t = datetime.now(TZ).date()\n    item = DEFAULT_ITEMS[0]\n    assert load_full(p, [], t).at[t, item] == False\n    cli.post(toggle_url(item, t))\n    assert load_full(p, [], t).at[t, item] == True\n    cli.post(toggle_url(item, t))  # toggle back\n    assert load_full(p, [], t).at[t, item] == False\n\n\n# a hand-added item name with URL metacharacters works end to end\nwith tempfile.TemporaryDirectory() as d:\n    p = Path(d) / \"ledger.csv\"\n    p.write_text(\"date,A?B\\n2026-08-23,False\\n\")\n    cli = Client(create_app(p, \"pw\", \"k\"))\n    cli.post(\"/login\", data={\"password\": \"pw\"})\n    day = date(2026, 8, 23)\n    cli.post(toggle_url(\"A?B\", day))\n    assert load_full(p, [], day).at[day, \"A?B\"] == True\n    assert \"/toggle/A%3FB/\" in cli.get(\"/\").text  # rendered checkboxes carry the encoded URL\n\n\n# an archived item (~ prefix) renders last, struck through, read-only, and ignores /toggle\nwith tempfile.TemporaryDirectory() as d:\n    p = Path(d) / \"ledger.csv\"\n    p.write_text(\"date,~古い,新しい\\n2026-08-23,True,False\\n\")\n    cli = Client(create_app(p, \"pw\", \"k\"))\n    cli.post(\"/login\", data={\"password\": \"pw\"})\n    html = cli.get(\"/\").text\n    assert html.index(\"新しい\") &lt; html.index(\"古い&lt;/s&gt;\")  # archived row moved to the bottom\n    assert \"disabled\" in html and \"/toggle/%7E\" not in html  # no htmx target on archived boxes\n    day = date(2026, 8, 23)\n    cli.post(toggle_url(\"~古い\", day))\n    assert load_full(p, [], day).at[day, \"~古い\"] == True  # unchanged\n\n\n# badge = checked days in the trailing 30 days, as n/30; a miss does not reset it\nwith tempfile.TemporaryDirectory() as d:\n    p = Path(d) / \"ledger.csv\"\n    t = datetime.now(TZ).date()\n    days = [t - timedelta(days=i) for i in (1, 3, 31)]  # 31 days ago is outside the window\n    p.write_text(\"date,x\\n\" + \"\".join(f\"{day.isoformat()},True\\n\" for day in sorted(days)))\n    cli = Client(create_app(p, \"pw\", \"k\"))\n    cli.post(\"/login\", data={\"password\": \"pw\"})\n    assert '&lt;span class=\"count\"&gt;2/30&lt;/span&gt;' in cli.get(\"/\").text\n\n\n# click-to-edit rename; a leading ~ archives, removing it restores; invalid names re-render the form with the error\nwith tempfile.TemporaryDirectory() as d:\n    p = Path(d) / \"ledger.csv\"\n    p.write_text(\"date,読書\\n2026-08-23,True\\n\")\n    cli = Client(create_app(p, \"pw\", \"k\"))\n    cli.post(\"/login\", data={\"password\": \"pw\"})\n    header = lambda: p.read_text().splitlines()[0]\n\n    assert 'hx-get=\"/edit/%E8%AA%AD%E6%9B%B8\"' in cli.get(\"/\").text  # the name is clickable\n    r = cli.get(\"/edit/%E8%AA%AD%E6%9B%B8\").text\n    assert 'value=\"読書\"' in r and 'hx-post=\"/rename/%E8%AA%AD%E6%9B%B8\"' in r\n\n    assert 'id=\"ledger\"' in cli.post(\"/rename/%E8%AA%AD%E6%9B%B8\", data={\"new\": \"本\"}).text\n    assert header() == \"date,本\"\n    cli.post(\"/rename/%E6%9C%AC\", data={\"new\": \"~本\"})  # archive by typing ~\n    assert header() == \"date,~本\"\n    r = cli.get(\"/edit/%7E%E6%9C%AC\").text\n    assert 'value=\"~本\"' in r  # archived row shows its marker\n    cli.post(\"/rename/%7E%E6%9C%AC\", data={\"new\": \"~読書\"})  # rename while archived stays archived\n    assert header() == \"date,~読書\"\n    cli.post(\"/rename/%7E%E8%AA%AD%E6%9B%B8\", data={\"new\": \"読書\"})  # restore by removing ~\n    assert header() == \"date,読書\"\n\n    r = cli.post(\"/rename/%E8%AA%AD%E6%9B%B8\", data={\"new\": \"a/b\"}).text\n    assert \"forbidden\" in r and 'value=\"a/b\"' in r and header() == \"date,読書\"  # error shown, file untouched\n    assert p.read_text().count(\"\\n\") == 2  # history row still there\n\n\n# Live dev inside Jupyter, fasthtml style: serve and render the app inline\nfrom fasthtml.jupyter import JupyUvi, HTMX\n\nserver = JupyUvi(create_app(Path(\"../data/ledger.csv\"), \"dev\", \"dev\"), port=8000)\nHTMX()  # renders the running app in an iframe\n# server.stop()",
+    "crumbs": [
+      "app"
+    ]
+  },
+  {
+    "objectID": "app.html#main",
+    "href": "app.html#main",
+    "title": "app",
+    "section": "main",
+    "text": "main\n\n\nsource\n\nmain\ndef main(\n    data_path:Path, # ledger.csv location\n    static_path:str='static', # passed through to `create_app`\n    host:str='127.0.0.1', # loopback only; Caddy is the sole public path (DESIGN.md §6)\n    port:int=None, # default: $PORT if set (systemd unit), else 5001\n):\nEntry point: secrets from env (fail-fast on empty), serve on loopback.",
+    "crumbs": [
+      "app"
+    ]
+  },
+  {
+    "objectID": "admin.html",
+    "href": "admin.html",
+    "title": "admin",
+    "section": "",
+    "text": "source\n\n\ndef backup(\n    path:Path, # live ledger CSV\n)-&gt;Path:\nCopy the ledger to a .bak sibling (overwritten each time) — the only safety net before a mutation.\n\n\n\nwith tempfile.TemporaryDirectory() as d:\n    p = sample(d)\n    bak = backup(p)\n    assert bak == p.with_suffix(\".bak\") and bak.read_text() == p.read_text()\n    p.write_text(\"date,x\\n\")\n    assert backup(p).read_text() == \"date,x\\n\"  # overwritten, not appended",
+    "crumbs": [
+      "admin"
+    ]
+  },
+  {
+    "objectID": "admin.html#backup",
+    "href": "admin.html#backup",
+    "title": "admin",
+    "section": "",
+    "text": "source\n\n\ndef backup(\n    path:Path, # live ledger CSV\n)-&gt;Path:\nCopy the ledger to a .bak sibling (overwritten each time) — the only safety net before a mutation.\n\n\n\nwith tempfile.TemporaryDirectory() as d:\n    p = sample(d)\n    bak = backup(p)\n    assert bak == p.with_suffix(\".bak\") and bak.read_text() == p.read_text()\n    p.write_text(\"date,x\\n\")\n    assert backup(p).read_text() == \"date,x\\n\"  # overwritten, not appended",
+    "crumbs": [
+      "admin"
+    ]
+  },
+  {
+    "objectID": "admin.html#summary",
+    "href": "admin.html#summary",
+    "title": "admin",
+    "section": "summary",
+    "text": "summary\n\n\nsource\n\nsummary\ndef summary(\n    path:Path, # live ledger CSV; must exist\n    today:date, # last day of the 30-day rate window\n)-&gt;list:\nOne dict per item in display order: name (no marker), archived, rate_30d.\n\n\n\nwith tempfile.TemporaryDirectory() as d:\n    p = sample(d)\n    t = date(2026, 8, 24)\n    assert summary(p, t) == [\n        {\"name\": \"読書\", \"archived\": False, \"rate_30d\": 2 / 30},\n        {\"name\": \"運動\", \"archived\": True, \"rate_30d\": 1 / 30},\n    ]\n    raises(FileNotFoundError, summary, Path(d) / \"missing.csv\", t)  # never auto-create from admin",
+    "crumbs": [
+      "admin"
+    ]
+  },
+  {
+    "objectID": "admin.html#mutate",
+    "href": "admin.html#mutate",
+    "title": "admin",
+    "section": "mutate",
+    "text": "mutate\n\n\nsource\n\nmutate\ndef mutate(\n    path:Path, # live ledger CSV; must exist\n    fn, # pure transform `DataFrame -&gt; DataFrame` from `habitrack.core`\n    today:date, # passed through to `summary`\n)-&gt;list:\nbackup -&gt; load -&gt; fn -&gt; atomic save -&gt; re-read check; returns the new summary.\n\n\n\nwith tempfile.TemporaryDirectory() as d:\n    p = sample(d)\n    t = date(2026, 8, 24)\n    out = mutate(p, lambda df: add_item(df, \"新項目\"), t)\n    assert [i[\"name\"] for i in out] == [\"読書\", \"新項目\", \"運動\"]\n    assert p.with_suffix(\".bak\").read_text().startswith(\"date,読書,~運動\")  # pre-mutation copy\n    assert load_full(p, [], t).at[t, \"新項目\"] == False\n    before = p.read_text()\n    raises(ValueError, mutate, p, lambda df: add_item(df, \"読書\"), t)  # validation error -&gt; file untouched\n    assert p.read_text() == before",
+    "crumbs": [
+      "admin"
+    ]
+  },
+  {
+    "objectID": "admin.html#main",
+    "href": "admin.html#main",
+    "title": "admin",
+    "section": "main",
+    "text": "main\n\n\nsource\n\nmain\ndef main(\n    argv:list=None, # CLI args; defaults to sys.argv[1:]\n)-&gt;int:\nSubcommands: summary | add NAME | archive NAME | unarchive NAME | rename OLD NEW. JSON on stdout, errors on stderr.\n\n\n\ndef run(*args):\n    \"Call `main` capturing (exit code, stdout, stderr).\"\n    out, err = io.StringIO(), io.StringIO()\n    with redirect_stdout(out), redirect_stderr(err):\n        rc = main(list(args))\n    return rc, out.getvalue(), err.getvalue()\n\nwith tempfile.TemporaryDirectory() as d:\n    p = str(sample(d))\n    rc, out, err = run(\"--data\", p, \"summary\")\n    assert rc == 0 and err == \"\"\n    assert [i[\"name\"] for i in json.loads(out)] == [\"読書\", \"運動\"]\n\n    rc, out, _ = run(\"--data\", p, \"add\", \"新項目\")\n    assert rc == 0 and [i[\"name\"] for i in json.loads(out)] == [\"読書\", \"新項目\", \"運動\"]\n    rc, out, _ = run(\"--data\", p, \"archive\", \"読書\")\n    assert rc == 0 and [i[\"name\"] for i in json.loads(out)] == [\"新項目\", \"読書\", \"運動\"]\n    rc, out, _ = run(\"--data\", p, \"unarchive\", \"運動\")\n    assert rc == 0 and [i[\"name\"] for i in json.loads(out)] == [\"運動\", \"新項目\", \"読書\"]  # column order kept\n    rc, out, _ = run(\"--data\", p, \"rename\", \"運動\", \"筋トレ\")\n    assert rc == 0 and [i[\"name\"] for i in json.loads(out)] == [\"筋トレ\", \"新項目\", \"読書\"]\n\n    rc, out, err = run(\"--data\", p, \"add\", \"a/b\")  # validation error: exit 1, message on stderr, no JSON\n    assert rc == 1 and out == \"\" and \"forbidden\" in err\n    rc, out, err = run(\"--data\", p, \"archive\", \"無い\")\n    assert rc == 1 and out == \"\" and \"無い\" in err",
+    "crumbs": [
+      "admin"
+    ]
+  },
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "habitrack",
+    "section": "",
+    "text": "This file will become your README and also the index of your documentation.",
+    "crumbs": [
+      "habitrack"
+    ]
+  },
+  {
+    "objectID": "index.html#developer-guide",
+    "href": "index.html#developer-guide",
+    "title": "habitrack",
+    "section": "Developer Guide",
+    "text": "Developer Guide\nIf you are new to using nbdev here are some useful pointers to get you started.\n\nInstall habitrack in Development mode\n# make sure habitrack package is installed in development mode\n$ pip install -e .\n\n# make changes under nbs/ directory\n# ...\n\n# compile to have changes apply to habitrack\n$ nbdev_prepare",
+    "crumbs": [
+      "habitrack"
+    ]
+  },
+  {
+    "objectID": "index.html#usage",
+    "href": "index.html#usage",
+    "title": "habitrack",
+    "section": "Usage",
+    "text": "Usage\n\nInstallation\nInstall latest from the GitHub repository:\n$ pip install git+https://github.com/doyu/habitrack.git\nor from conda\n$ conda install -c doyu habitrack\nor from pypi\n$ pip install habitrack\n\n\nDocumentation\nDocumentation can be found hosted on this GitHub repository’s pages. Additionally you can find package manager specific guidelines on conda and pypi respectively.",
+    "crumbs": [
+      "habitrack"
+    ]
+  },
+  {
+    "objectID": "index.html#how-to-use",
+    "href": "index.html#how-to-use",
+    "title": "habitrack",
+    "section": "How to use",
+    "text": "How to use\nFill me in please! Don’t forget code examples:\n\n1+1\n\n2",
+    "crumbs": [
+      "habitrack"
+    ]
+  },
+  {
+    "objectID": "core.html",
+    "href": "core.html",
+    "title": "core",
+    "section": "",
+    "text": "source\n\n\ndef save_full(\n    df:DataFrame, # ledger frame — index=date, columns=item names, values=bool\n    path:Path, # live CSV; a .tmp sibling in the same dir is used for the swap\n):\nAtomic write: a mid-write crash must never corrupt the live file.\n\n\n\nwith tempfile.TemporaryDirectory() as d:\n    p = Path(d) / \"ledger.csv\"\n    df = pd.DataFrame({\"読書\": [True, False]},\n                      index=pd.Index([date(2026, 8, 23), date(2026, 8, 24)], name=\"date\"))\n    save_full(df, p)\n    assert p.exists() and not p.with_suffix(\".tmp\").exists()\n    back = pd.read_csv(p, index_col=0)\n    assert list(back.columns) == [\"読書\"]\n    assert back[\"読書\"].tolist() == [True, False]",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#save_full",
+    "href": "core.html#save_full",
+    "title": "core",
+    "section": "",
+    "text": "source\n\n\ndef save_full(\n    df:DataFrame, # ledger frame — index=date, columns=item names, values=bool\n    path:Path, # live CSV; a .tmp sibling in the same dir is used for the swap\n):\nAtomic write: a mid-write crash must never corrupt the live file.\n\n\n\nwith tempfile.TemporaryDirectory() as d:\n    p = Path(d) / \"ledger.csv\"\n    df = pd.DataFrame({\"読書\": [True, False]},\n                      index=pd.Index([date(2026, 8, 23), date(2026, 8, 24)], name=\"date\"))\n    save_full(df, p)\n    assert p.exists() and not p.with_suffix(\".tmp\").exists()\n    back = pd.read_csv(p, index_col=0)\n    assert list(back.columns) == [\"読書\"]\n    assert back[\"読書\"].tolist() == [True, False]",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#load_full",
+    "href": "core.html#load_full",
+    "title": "core",
+    "section": "load_full",
+    "text": "load_full\n\n\nsource\n\nload_full\ndef load_full(\n    path:Path, # ledger CSV location\n    default_items:list, # columns for first-run auto-create\n    today:date, # index row for first-run auto-create\n)-&gt;DataFrame:\nFull history; blank cells read as False; auto-creates the CSV on first run.\n\n\n\nwith tempfile.TemporaryDirectory() as d:\n    p = Path(d) / \"ledger.csv\"\n    t = date(2026, 8, 24)\n\n    # first run: auto-create, everything False\n    df = load_full(p, [\"読書\", \"運動\"], t)\n    assert p.exists()\n    assert list(df.columns) == [\"読書\", \"運動\"]\n    assert list(df.index) == [t]\n    assert df.dtypes.eq(bool).all() and not df.values.any()\n\n    # blank cells (e.g. a hand-added column) read as False, never True\n    p.write_text(\"date,読書,運動\\n2026-08-23,True,\\n2026-08-24,,False\\n\")\n    df = load_full(p, [], t)\n    assert df.dtypes.eq(bool).all()\n    assert df.at[date(2026, 8, 23), \"読書\"] == True\n    assert df.at[date(2026, 8, 23), \"運動\"] == False\n    assert df.at[date(2026, 8, 24), \"読書\"] == False\n    assert df.at[date(2026, 8, 24), \"運動\"] == False",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#window",
+    "href": "core.html#window",
+    "title": "core",
+    "section": "window",
+    "text": "window\n\n\nsource\n\nwindow\ndef window(\n    full:DataFrame, # full history from `load_full`\n    today:date, # last day of the window\n    days:int=10, # window length\n)-&gt;DataFrame:\nTrailing days-day view ending today; dates missing from history are False.\n\n\n\nt = date(2026, 8, 24)\nfull = pd.DataFrame({\"読書\": [True]},\n                    index=pd.Index([date(2026, 8, 20)], name=\"date\")).astype(bool)\nw = window(full, t, 10)\nassert len(w) == 10\nassert list(w.index)[0] == date(2026, 8, 15) and list(w.index)[-1] == t\nassert w.at[date(2026, 8, 20), \"読書\"] == True\nassert w.at[t, \"読書\"] == False  # date missing from history -&gt; False\nassert w.dtypes.eq(bool).all()",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#item-management",
+    "href": "core.html#item-management",
+    "title": "core",
+    "section": "Item management",
+    "text": "Item management\nItems live only in the CSV header; an archived item is a column whose name starts with ~ (DESIGN.md §5). Everything here is a pure DataFrame -&gt; DataFrame transform — I/O stays in save_full/load_full.",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#is_archived",
+    "href": "core.html#is_archived",
+    "title": "core",
+    "section": "is_archived",
+    "text": "is_archived\n\n\nsource\n\nis_archived\ndef is_archived(\n    name:str, # column name as stored in the CSV header\n)-&gt;bool:\nTrue when the column name carries the archive marker.\n\n\n\nassert is_archived(\"~読書\") == True\nassert is_archived(\"読書\") == False\nassert is_archived(\"読~書\") == False  # only a leading marker counts",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#display_name",
+    "href": "core.html#display_name",
+    "title": "core",
+    "section": "display_name",
+    "text": "display_name\n\n\nsource\n\ndisplay_name\ndef display_name(\n    name:str, # column name as stored in the CSV header\n)-&gt;str:\nItem name without the archive marker.\n\n\n\nassert display_name(\"~読書\") == \"読書\"\nassert display_name(\"読書\") == \"読書\"",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#validate_name",
+    "href": "core.html#validate_name",
+    "title": "core",
+    "section": "validate_name",
+    "text": "validate_name\n\n\nsource\n\nvalidate_name\ndef validate_name(\n    name:str, # candidate item name (display form, no marker)\n    existing:list, # current column names, archived ones included\n):\nRaise ValueError when name would corrupt the CSV, break routing, or collide.\n\n\n\nvalidate_name(\"新項目\", [\"読書\", \"~運動\"])  # ok\nvalidate_name(\"A?B #1 %\", [\"読書\"])  # URL metacharacters are fine (percent-encoded by toggle_url)\nfor bad in [\"\", \"~x\", \"a,b\", 'a\"b', \"a/b\", \"a\\nb\"]:\n    raises(ValueError, validate_name, bad, [])\nraises(ValueError, validate_name, \"読書\", [\"読書\"])  # duplicate\nraises(ValueError, validate_name, \"運動\", [\"~運動\"])  # would collide with the archived item once it is restored",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#ordered_items",
+    "href": "core.html#ordered_items",
+    "title": "core",
+    "section": "ordered_items",
+    "text": "ordered_items\n\n\nsource\n\nordered_items\ndef ordered_items(\n    df:DataFrame, # ledger frame\n)-&gt;list:\nColumn names for display: active items first, then archived, each in column order.\n\n\n\ndf = pd.DataFrame(columns=[\"~a\", \"b\", \"c\", \"~d\"])\nassert ordered_items(df) == [\"b\", \"c\", \"~a\", \"~d\"]",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#add_item",
+    "href": "core.html#add_item",
+    "title": "core",
+    "section": "add_item",
+    "text": "add_item\n\n\nsource\n\nadd_item\ndef add_item(\n    df:DataFrame, # ledger frame\n    name:str, # new item name\n)-&gt;DataFrame:\nNew item as the last column; every existing day reads False.\n\n\n\nidx = pd.Index([date(2026, 8, 24)], name=\"date\")\ndf = pd.DataFrame({\"読書\": [True]}, index=idx)\nout = add_item(df, \"運動\")\nassert list(out.columns) == [\"読書\", \"運動\"]\nassert out.at[date(2026, 8, 24), \"運動\"] == False and out.dtypes.eq(bool).all()\nassert list(df.columns) == [\"読書\"]  # input untouched\nraises(ValueError, add_item, df, \"読書\")",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#rename_item",
+    "href": "core.html#rename_item",
+    "title": "core",
+    "section": "rename_item",
+    "text": "rename_item\n\n\nsource\n\nrename_item\ndef rename_item(\n    df:DataFrame, # ledger frame\n    old:str, # current display name\n    new:str, # new display name\n)-&gt;DataFrame:\nRename keeping history; an archived item stays archived.\n\n\n\nidx = pd.Index([date(2026, 8, 24)], name=\"date\")\ndf = pd.DataFrame({\"読書\": [True], \"~運動\": [True]}, index=idx)\nout = rename_item(df, \"読書\", \"本を読む\")\nassert list(out.columns) == [\"本を読む\", \"~運動\"]\nassert out.at[date(2026, 8, 24), \"本を読む\"] == True  # history kept\nout = rename_item(df, \"運動\", \"筋トレ\")  # archived: addressed by display name, marker kept\nassert list(out.columns) == [\"読書\", \"~筋トレ\"]\nraises(KeyError, rename_item, df, \"無い\", \"x\")\nraises(ValueError, rename_item, df, \"読書\", \"運動\")  # collides with the archived item",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#set_archived",
+    "href": "core.html#set_archived",
+    "title": "core",
+    "section": "set_archived",
+    "text": "set_archived\n\n\nsource\n\nset_archived\ndef set_archived(\n    df:DataFrame, # ledger frame\n    name:str, # display name\n    flag:bool, # True = archive, False = restore\n)-&gt;DataFrame:\nAdd or remove the archive marker; no-op when already in that state.\n\n\n\nidx = pd.Index([date(2026, 8, 24)], name=\"date\")\ndf = pd.DataFrame({\"読書\": [True], \"~運動\": [False]}, index=idx)\nassert list(set_archived(df, \"読書\", True).columns) == [\"~読書\", \"~運動\"]\nassert list(set_archived(df, \"運動\", False).columns) == [\"読書\", \"運動\"]\nassert list(set_archived(df, \"読書\", False).columns) == [\"読書\", \"~運動\"]  # no-op\nassert set_archived(df, \"読書\", True).at[date(2026, 8, 24), \"~読書\"] == True  # history kept\nraises(KeyError, set_archived, df, \"無い\", True)",
+    "crumbs": [
+      "core"
+    ]
+  },
+  {
+    "objectID": "core.html#rate_30d",
+    "href": "core.html#rate_30d",
+    "title": "core",
+    "section": "rate_30d",
+    "text": "rate_30d\n\n\nsource\n\nrate_30d\ndef rate_30d(\n    full:DataFrame, # full history from `load_full`\n    item:str, # column name\n    today:date, # last day of the 30-day window\n)-&gt;float:\nFraction of the trailing 30 days (ending today) on which the item was checked.\n\n\n\nt = date(2026, 8, 24)\nidx = [t - timedelta(days=i) for i in range(40)]\nfull = pd.DataFrame({\"x\": [i &lt; 15 for i in range(40)]}, index=pd.Index(idx, name=\"date\"))\nassert rate_30d(full, \"x\", t) == 0.5  # 15 of the last 30 days; days 30-39 are outside the window\nassert rate_30d(full, \"x\", t + timedelta(days=30)) == 0.0\nempty = pd.DataFrame({\"x\": []}, index=pd.Index([], name=\"date\")).astype(bool)\nassert rate_30d(empty, \"x\", t) == 0.0",
+    "crumbs": [
+      "core"
+    ]
+  }
+]
